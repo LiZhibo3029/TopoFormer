@@ -1,0 +1,24 @@
+{
+  "dinov3": "/data/topoformer/DBs/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth",
+  "convnext": "/data/topoformer/DBs/convnextv2_base_1k_224_ema.pt",
+  "path_roots": {
+    "/datasets": "/data/topoformer/DBs"
+  },
+  "datasets": {
+    "briancancer": {
+      "train": "/data/topoformer/DBs/Briancancer/train/train",
+      "test": "/data/topoformer/DBs/Briancancer/test/test",
+      "maps": "prepared/briancancer/{threshold}/maps",
+      "pooled": "prepared/briancancer/{threshold}/gv4.npz",
+      "split_manifest": "assets/briancancer_splits.npz"
+    },
+    "crc": {
+      "train": "/data/topoformer/DBs/NCT-CRC-HE-100K",
+      "test": "/data/topoformer/DBs/CRC-VAL-HE-7K",
+      "maps": "prepared/crc/{threshold}/maps",
+      "pooled": "prepared/crc/{threshold}/gv4.npz",
+      "split_manifest": "assets/crc_splits.npz"
+    }
+  },
+  "compact_checkpoints": true
+}
