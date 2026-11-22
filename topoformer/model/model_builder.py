@@ -3,8 +3,7 @@ import types
 import torch
 
 from .disentanglement import OrthogonalDisentangler
-from .topo_cti_v2 import StageSpecificCTIHook
-from .lora import get_vit_blocks, inject_lora_vit
+from .lora import inject_lora_vit
 from .convnext_fusion import build_convnextv2, GatedFusionFD
 from .four_stage_cti import FourStageCTI
 
@@ -13,33 +12,13 @@ def build_topoformer_model(
     device,
     fd_label_names,
     dino_local_ckpt: str,
-    encoder_name: str,
     topo_c: int,
-    fd_finetune_mode: str,
-    fd_unfreeze_last_k: int,
-    fd_lora_r: int,
-    fd_lora_alpha: float,
-    fd_lora_dropout: float,
-    use_topo_inject: bool,
-    topo_attn_dropout: float,
-    topo_proj_dropout: float,
-    topo_num_heads,
     convnext_ckpt: str,
-    convnext_name: str,
-    topo_delta_norm_factor: float = 0.3,
-    topo_inject_mode: str = "per_level",
-    cti_grid=None,
-    cti_levels=(0, 1, 2, 3),
-    dnfd=True,
+    cti_grid: int,
 ):
-    # Simple Concat supplies the same concatenated map at each active stage.
-    if topo_inject_mode not in {"per_level", "raw_concat"}:
-        raise ValueError(
-            f"topo_inject_mode must be 'per_level' or 'raw_concat', got {topo_inject_mode!r}"
-        )
     vit = OrthogonalDisentangler(
         encoder_source="dinov3",
-        encoder_name=encoder_name,
+        encoder_name="dinov3_vit7b16",
         pretrained_path=dino_local_ckpt,
         out_dim=len(fd_label_names),
         frozen_blocks=999,
@@ -54,64 +33,13 @@ def build_topoformer_model(
     if str(device).startswith("cuda"):
         vit.encoder.to(dtype=torch.float16)
 
-    if use_topo_inject:
-        blocks = get_vit_blocks(vit.encoder)
-        if blocks is None:
-            raise RuntimeError("Cannot locate ViT blocks for topo injection.")
-
-        n_blocks = int(len(blocks))
-
-        token_dim = getattr(vit.encoder, "embed_dim", None) or getattr(vit.encoder, "num_features", None)
-        if token_dim is None:
-            token_dim = int(blocks[-1].norm1.normalized_shape[0]) if hasattr(blocks[-1], "norm1") else None
-        if token_dim is None:
-            raise RuntimeError("Cannot infer token_dim(embed_dim) from dinov3 encoder")
-
-        topo_n_stages = int(globals().get("TOPO_N_STAGES", 4))
-
-        vit.topo_injector = StageSpecificCTIHook(
-            topo_in_channels=topo_c,
-            token_dim=int(token_dim),
-            n_blocks=n_blocks,
-            n_stages=topo_n_stages,
-            mixer_heads=topo_num_heads,
-            attn_dropout=topo_attn_dropout,
-            proj_dropout=topo_proj_dropout,
-            delta_norm_factor=topo_delta_norm_factor,
-            mode=topo_inject_mode,
-        )
-
-        vit.encoder._topo_hook = vit.topo_injector
-
-        for p in vit.topo_injector.parameters():
-            p.requires_grad = True
-
-        print("[topo] injector enabled | StageSpecific | n_blocks=", n_blocks, "token_dim=", int(token_dim))
-
-    if fd_finetune_mode == "lora":
-        n_rep = inject_lora_vit(
-            vit.encoder,
-            r=fd_lora_r,
-            alpha=fd_lora_alpha,
-            dropout=fd_lora_dropout,
-        )
-
-        for n, p in vit.encoder.named_parameters():
-            if "lora_" in n.lower():
-                p.requires_grad = True
-
-        print(f"[lora] injected into encoder: replaced_linears={n_rep}")
-
-    if fd_finetune_mode in {"unfreeze", "unfreeze_last_k", "lora"} and fd_unfreeze_last_k > 0:
-        blocks = get_vit_blocks(vit.encoder)
-        if blocks is None:
-            raise RuntimeError("Cannot locate blocks for unfreeze_last_k.")
-
-        for blk in blocks[-int(fd_unfreeze_last_k):]:
-            for p in blk.parameters():
-                p.requires_grad = True
-
-        print(f"[unfreeze] last_k={fd_unfreeze_last_k} blocks set trainable")
+    count = inject_lora_vit(vit.encoder, r=16, alpha=16.0, dropout=0.05, targets=("qkv", "proj"))
+    if count != 80:
+        raise ValueError(f"Expected 80 LoRA attention projections across 40 blocks, got {count}")
+    for name, parameter in vit.encoder.named_parameters():
+        if "lora_" in name.lower():
+            parameter.requires_grad = True
+    print(f"[lora] injected into encoder: replaced_linears={count}")
 
     vit.adapter_disc.float()
     vit.adapter_indisc.float()
@@ -122,9 +50,6 @@ def build_topoformer_model(
     vit.proj_indisc_simple.float()
     vit.pool_attn.float()
 
-    if hasattr(vit, "topo_injector"):
-        vit.topo_injector.float()
-
     _orig_encode = vit._encode
 
     def _encode_fp32(self, x, topo_levels=None):
@@ -133,23 +58,21 @@ def build_topoformer_model(
 
     vit._encode = types.MethodType(_encode_fp32, vit)
 
-    cnx = build_convnextv2(convnext_ckpt, convnext_name, device) if convnext_ckpt else None
+    cnx = build_convnextv2(convnext_ckpt, "convnextv2_base", device)
 
-    model = GatedFusionFD(vit, cnx, dnfd=dnfd)
+    model = GatedFusionFD(vit, cnx, dnfd=True)
     model.proj_cnx.float()
     model.gate_ln.float()
     model.gate_fc.float()
 
     model = model.to(device)
-    if cti_grid is not None:
-        if len(vit.encoder.blocks) != 40 or vit.encoder.n_storage_tokens != 4 or use_topo_inject:
-            raise ValueError("Gated TopoCTI requires ViT-7B/16 and the legacy hook disabled")
-        with torch.random.fork_rng(devices=[]):
-            cti = FourStageCTI(
-                "local", vit.encoder.embed_dim, topo_c, cti_grid,
-                levels=cti_levels, concat=topo_inject_mode == "raw_concat",
-            )
-        vit.encoder._topo_hook = cti.to(device=device, dtype=torch.float32)
+    if len(vit.encoder.blocks) != 40 or vit.encoder.n_storage_tokens != 4:
+        raise ValueError("TopoCTI requires the ViT-7B/16 token layout")
+    if topo_c != 400 or cti_grid not in (8, 14):
+        raise ValueError("Expected four 400-channel DeepHisto or CRC TopoFPN levels")
+    with torch.random.fork_rng(devices=[]):
+        cti = FourStageCTI(vit.encoder.embed_dim, topo_c, cti_grid)
+    vit.encoder._topo_hook = cti.to(device=device, dtype=torch.float32)
     # Surface any async CUDA illegal-access / ECC error that was queued
     # by an earlier op (e.g. previous `model.to()` from preflight), so
     # the user gets a clean stack instead of a misleading one.

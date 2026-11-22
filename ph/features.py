@@ -2,13 +2,22 @@ import cv2
 import numpy as np
 from gudhi.representations import PersistenceImage
 
-from ph.generate_topoconcat import upsample_nearest
-from ph.legacy_alpha_pi import alphacomplex, preprocess
-
-WINDOWS = (16, 32, 64, 128)
+from ph import WINDOWS
+from ph.alpha_pi import alphacomplex, preprocess
 
 
-def extract(gray, dataset, threshold, pool_levels, concat=False):
+def upsample_nearest(map_chw: np.ndarray, hw: tuple[int, int]) -> np.ndarray:
+    """Matches torch.nn.functional.interpolate(mode='nearest') index mapping."""
+    h, w = map_chw.shape[-2:]
+    th, tw = hw
+    if (h, w) == (th, tw):
+        return map_chw
+    iy = np.minimum((np.arange(th, dtype=np.int64) * h) // th, h - 1)
+    ix = np.minimum((np.arange(tw, dtype=np.int64) * w) // tw, w - 1)
+    return map_chw[:, iy[:, None], ix[None, :]]
+
+
+def extract(gray, dataset, threshold):
     """Apply the same alpha/PI and nearest-neighbor FPN recipe as the saved caches."""
     size = 224 if dataset == "crc" else 128
     gray = cv2.resize(gray.astype(np.float32), (size, size), interpolation=cv2.INTER_AREA)
@@ -25,18 +34,11 @@ def extract(gray, dataset, threshold, pool_levels, concat=False):
                 maps[:, i, j] = pi.fit_transform(diagram)[0]
         raw.append(maps)
 
-    def pyramid(scales):
-        fused = list(scales)
-        if not concat:
-            for level in range(len(fused) - 2, -1, -1):
-                fused[level] = fused[level] + upsample_nearest(fused[level + 1], fused[level].shape[-2:])
-        return fused
+    fused = list(raw)
+    for level in range(len(fused) - 2, -1, -1):
+        fused[level] = fused[level] + upsample_nearest(fused[level + 1], fused[level].shape[-2:])
 
-    grid = raw[0].shape[-2:]
-    maps = [upsample_nearest(level, grid) for level in pyramid(raw)]
-    pool_maps = pyramid(raw[:pool_levels])
-    if concat:
-        pool_maps = [upsample_nearest(level, grid) for level in pool_maps]
-    # Legacy FPN pools each native grid. On CRC, 3×3 -> 14×14 is not uniform.
-    pooled = np.concatenate([level.mean(axis=(1, 2)) for level in pool_maps])
-    return maps, pooled
+    # Pool the native grids before expanding their cells for the map cache.
+    # In particular, the 3x3 CRC grid does not expand uniformly to 14x14.
+    pooled = np.concatenate([level.mean(axis=(1, 2)) for level in fused])
+    return fused, pooled

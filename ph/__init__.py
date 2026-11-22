@@ -1,0 +1,2 @@
+WINDOWS = (16, 32, 64, 128)
+GV_DIM = len(WINDOWS) * 400

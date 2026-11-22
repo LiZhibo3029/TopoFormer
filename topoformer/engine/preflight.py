@@ -10,7 +10,6 @@ def preflight(model, loader, device, amp=False):
     hook = encoder._topo_hook
     starts = tuple(hook.stage_starts)
     assert starts == tuple(10 * level for level in hook.levels)
-    assert hook.variant == "local"
     prefix = encoder.n_storage_tokens + 1
     assert prefix == 5
     modes = [(module, module.training) for module in model.modules()]
@@ -73,4 +72,4 @@ def preflight(model, loader, device, amp=False):
         for module, training in modes:
             module.training = training
 
-    print(f"CTI_PREFLIGHT_PASS variant={hook.variant} starts={starts} f_disc_swap_max={responses}", flush=True)
+    print(f"CTI_PREFLIGHT_PASS starts={starts} f_disc_swap_max={responses}", flush=True)

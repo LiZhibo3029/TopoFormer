@@ -8,7 +8,7 @@ TopoFormer is a topology-aware histopathology classification framework that inte
   <img src="docs/figures/Architecture.png" alt="TopoFormer architecture" width="95%">
 </p>
 
-**Fig. 1.** Overall architecture of TopoFormer. TopoFPN builds four spatial maps from persistent-homology descriptors. TopoCTI injects these maps into DINOv3, and gated fusion combines its visual representation with frozen ConvNeXtV2 features. DNFD supervises the fused visual feature during training. At inference, logistic regression combines that visual feature with the global topology vector.
+**Fig. 1.** Overall architecture of TopoFormer. TopoFPN fuses PH maps at four window sizes. TopoCTI passes the four fused maps to the successive stages of DINOv3, and global average pooling of the same native maps yields a 1,600-dimensional topology vector. ConvNeXtV2 and DINOv3 features are combined by gated fusion. DNFD supervises the fused visual representation during training. Logistic regression classifies the normalized visual representation and topology vector.
 
 ---
 
@@ -36,6 +36,8 @@ TopoFormer is a topology-aware histopathology classification framework that inte
 - [Third-Party Resources and Dataset Citations](#third-party-resources-and-dataset-citations)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
+- [Research Use and Reporting](#research-use-and-reporting)
+- [Contact](#contact)
 
 ---
 
@@ -54,8 +56,8 @@ The released implementation contains the following principal components:
 - **DNFD** for encouraging task-related feature differentiation through discriminative and auxiliary representations with regularization objectives.
 - **Global topological vector** for complementary sample-level topological information.
 - **L2-regularized logistic regression** for the final feature-fusion classifier.
-- **Dataset-specific preprocessing, training, and evaluation scripts** for DeepHisto and CRC.
-- **External TCGA-UT evaluation** for three-class glioma generalization.
+- **Reproducible preprocessing, training, feature export, and classification** for DeepHisto and CRC.
+- **External TCGA-UT protocol and cohort manifest** for three-class glioma generalization.
 
 The reported experiments concern **patch-level classification**. The current repository does not claim a validated whole-slide clinical deployment pipeline.
 
@@ -63,75 +65,37 @@ The reported experiments concern **patch-level classification**. The current rep
 
 ## Repository Structure
 
-The repository is organized around dataset preparation, topology generation, model definition, training, and post-training feature-fusion evaluation.
-
-> The tree below lists the principal files referenced by the released experimental pipeline. Large datasets, pretrained checkpoints, cached PH maps, extracted features, and experiment logs are intentionally kept outside the Git repository.
-
 ```text
 TopoFormer/
-├── Backbone/
-│   └── dinov3/
-│       └── dinov3/
-│           └── dinov3/
-│               └── models/
-│                   └── vision_transformer.py
-│
-├── docs/
-│   └── figures/
-│       ├── Architecture.png
-│       └── TopoCTI.png
-│
-├── notebooks/
-│   ├── TopoFPN_layer.py
-│   ├── TopoFPN_vector.py
-│   ├── TopoFPN_layer_CRC_180.py
-│   ├── TopoFPN_vector_CRC_180.py
-│   │
-│   ├── Final_feature_fusion_eval_briancancer—200_seed42.ipynb
-│   ├── Final_feature_fusion_eval_briancancer—200_seed123.ipynb
-│   ├── Final_feature_fusion_eval_briancancer—200_seed666.ipynb
-│   ├── Final_feature_fusion_eval_crc—180_seed12.ipynb
-│   ├── Final_feature_fusion_eval_crc—180_seed42.ipynb
-│   └── Final_feature_fusion_eval_crc—180_seed666.ipynb
-│
-├── scripts/
-│   ├── train_briancancer_rgb_200_seed42.py
-│   └── train_crc_rgb_180_seed42.py
-│
+├── prepare_ph.py           # Four-scale PH extraction and TopoFPN caching
+├── run_topoformer.py       # Model validation, training and feature export
+├── report.py               # Train-fit normalization, logistic regression and metrics
+├── materials.py            # Configuration and PH cache conversion
+├── ph/                     # Alpha complex, persistence images and TopoFPN
 ├── topoformer/
-│   ├── data/
-│   │   └── topo_maps.py
-│   ├── engine/
-│   └── model/
-│       ├── four_stage_cti.py
-│       ├── lora.py
-│       ├── disentanglement.py
-│       └── convnext_fusion.py
-│
-├── assets/                  # Fixed splits, figure cohorts and masks
-├── figure3/                 # Grad-CAM and tissue occlusion
+│   ├── data/               # Dataset splits, image loading and topology caches
+│   ├── engine/             # Training setup, CTI preflight and feature export
+│   └── model/              # TopoCTI, LoRA, ConvNeXtV2 fusion and DNFD
+├── Backbone/dinov3/        # Patched DINOv3 backbone sources and upstream license
+├── assets/                 # Fixed benchmark splits and TCGA-UT cohort manifest
+├── docs/figures/           # Manuscript Figs. 1 and 2
 ├── config.example.json
-├── prepare_ph.py            # Create PH maps and global vectors
-├── experiment.py            # Preflight, train and export per-patch features
-├── report.py                # Fit the final classifier and score predictions
-├── jobs.py                  # Run individual experiments
-├── analysis_tables.py       # Representation and uncertainty analyses
 ├── requirements.txt
-├── LICENSE
-└── README.md
+└── LICENSE
 ```
 
 ### Main entry points
 
-From the repository root, copy `config.example.json` to `config.local.json`. Set the local image, weight and cache paths. The fixed manifests use the prefix `/datasets`. Map it to your dataset root under `path_roots`, or map individual class-tree prefixes if your layout differs. Use absolute paths for image roots. Keep perturbed CRC images outside the clean train and test trees.
+From the repository root, create the local configuration and set the dataset and checkpoint paths.
 
 ```bash
 cp config.example.json config.local.json
-python selfcheck.py
-python jobs.py list threshold
+python prepare_ph.py --help
+python run_topoformer.py --help
+python report.py --help
 ```
 
-The [training examples](#training) run a single seed. `experiment.py` supports individual training and export calls, and `report.py` scores their saved features. The six original fusion notebooks remain available under `notebooks/` for their historical checkpoints.
+Use the [preprocessing](#dataset-specific-topology-preprocessing), [training](#training), and [classification](#final-feature-fusion-evaluation) commands in order. The implementation and example commands cover the full TopoFormer model. The paper and supplement document the separate analysis protocols.
 
 ---
 
@@ -146,7 +110,7 @@ The reference A40 environment used for training and evaluation was:
 | Python | 3.11 |
 | PyTorch / torchvision | 2.4.0 / 0.19.0 |
 | CUDA build of PyTorch | 12.1 |
-| GUDHI (verified training environment) | 3.11.0 |
+| GUDHI | 3.10.0 in the manuscript protocol; 3.11.0 pinned for the release |
 | GPU | NVIDIA A40, 48 GB |
 
 ### Create the environment
@@ -260,15 +224,15 @@ For both datasets, checkpoints are selected according to:
 best validation balanced accuracy
 ```
 
-Thresholds use the three-seed mean validation balanced accuracy. The runner can also export test predictions for each threshold. The threshold selector reads validation scores only.
+Foreground thresholds were selected by mean validation balanced accuracy across the three seeds. The official test partitions are reserved for final evaluation. DeepHisto's internal holdout is patch-level because patient identifiers are unavailable within the released training data.
 
 ---
 
 ## TCGA-UT External Evaluation
 
-The external evaluation uses **786 TCGA-UT patches** from three glioma subtype directories.
+The external evaluation uses **786 TCGA-UT patches** from 83 TCGA case identifiers and 187 slide identifiers. Labels use the simplified 2021 classification in the subtype annotation file.
 
-Importantly, this experiment uses **separately trained three-class DeepHisto models**. Training includes astrocytoma, glioblastoma, and oligodendroglioma only; the normal and necrosis classes are excluded. The external experiment therefore does **not** select three logits from a five-class classifier.
+Importantly, this experiment uses **separately trained three-class DeepHisto models**. Training includes astrocytoma, glioblastoma, and oligodendroglioma only; the normal and necrosis classes are excluded. The selected checkpoints and the late-fusion classifier were fitted using the three-class DeepHisto development data.
 
 | External directory | Three-class label | Patches | Distinct WSI identifiers |
 |---|---|---:|---:|
@@ -293,7 +257,7 @@ WSI_ID
 PatchPath
 ```
 
-`WSI_ID` identifies a source slide directory. The total of **187 distinct WSI identifiers must not be interpreted as 187 independently verified patients**.
+`WSI_ID` identifies a source slide directory. Case and slide counts are reported separately above.
 
 Original TCGA-UT imagery can be obtained from:
 
@@ -311,7 +275,7 @@ External images are evaluated under two conditions:
 
 Reference BGR-channel means and standard deviations are estimated from **3,000 sampled DeepHisto training patches**. These statistics are applied only during external evaluation.
 
-The trained model checkpoints remain fixed across the two external-evaluation conditions.
+The trained model checkpoints remain fixed across the two external-evaluation conditions. The external protocol and results are described in the manuscript. The cohort manifest is supplied for reference.
 
 ---
 
@@ -361,7 +325,7 @@ Datasets and the following generated files should normally be stored outside the
 - external-evaluation image copies;
 - large intermediate PH outputs.
 
-Use explicit local paths in the dataset-specific scripts or configuration files.
+Set explicit local paths in `config.local.json`. Update `path_roots` so the manifest paths under `/datasets` resolve to the corresponding local image directories.
 
 ---
 
@@ -377,7 +341,7 @@ The visual branch uses:
 224 × 224 RGB
 ```
 
-with ImageNet normalization.
+with ImageNet normalization and no random data augmentation.
 
 ### PH branch
 
@@ -391,6 +355,7 @@ The PH branch uses separately resized grayscale images.
 | Morphological dilation | 2 × 2 kernel, 1 iteration | Same |
 | Local PH windows | 16, 32, 64, 128 px | Same |
 | Stride | Equal to window size | Same |
+| Native grids (L0 to L3) | 8 × 8, 4 × 4, 2 × 2, 1 × 1 | 14 × 14, 7 × 7, 3 × 3, 1 × 1 |
 | Complex | Alpha complex | Same |
 | Homology dimension | **H1** | Same |
 | Persistence image | 20 × 20 | Same |
@@ -413,38 +378,31 @@ The PH preprocessing procedure is:
 9. Compute **H1 persistent homology**.
 10. Convert the persistence representation into a `20 × 20` persistence image.
 11. Organize local descriptors into four multi-scale spatial maps.
-12. Align the maps through the TopoFPN top-down pathway.
+12. Fuse the maps through the TopoFPN top-down pathway.
+
+Only complete windows are extracted, starting from the upper-left corner without padding. On CRC, 64- and 128-pixel windows cover the upper-left 192 × 192 and 128 × 128 regions, respectively. The encoder removes the (0.25, 0.5) birth–death pair and fits a birth–persistence grid separately for each nonempty window diagram. An empty diagram produces an all-zero image.
 
 ### Dataset-specific topology preprocessing
 
-The topology preprocessing modules referenced by the released experiments are:
-
-```text
-notebooks/TopoFPN_layer.py
-notebooks/TopoFPN_vector.py
-notebooks/TopoFPN_layer_CRC_180.py
-notebooks/TopoFPN_vector_CRC_180.py
-```
-
-To generate clean caches from the public images and fixed splits, run:
-
 ```bash
-python prepare_ph.py briancancer 200 clean --config config.local.json
-python prepare_ph.py crc 180 clean --config config.local.json
+python prepare_ph.py briancancer 200 --config config.local.json
+python prepare_ph.py crc 180 --config config.local.json
 ```
 
-This writes four aligned memory-mapped levels plus a separate 1,200-dimensional vector. Choose 160, 180 or 200 to prepare the threshold sweep. Each width uses full, non-overlapping windows and fits the persistence-image grid to each local diagram. The same extractor also prepares maps for external or perturbed inputs. Existing per-level NPZ archives can be reused directly or unpacked with `python materials.py /path/to/cache/prefix`.
+The extractor saves the four TopoFPN levels on their native grids for token interaction and the **1,600-dimensional** global vector formed from the same native fused levels. The three foreground thresholds documented in Table S5 are supported as preprocessing settings. Each threshold has its own cache location.
 
-A typical set of cached files is:
+A typical cache contains:
 
 ```text
-/path/to/cache/topofpn_levels_train_test_maps_L0.npz
-/path/to/cache/topofpn_levels_train_test_maps_L1.npz
-/path/to/cache/topofpn_levels_train_test_maps_L2.npz
-/path/to/cache/topofpn_levels_train_test_maps_L3.npz
+prepared/briancancer/200/
+├── maps_L0.mmap/
+├── maps_L1.mmap/
+├── maps_L2.mmap/
+├── maps_L3.mmap/
+└── gv4.npz
 ```
 
-Set each dataset’s `maps` to the prefix before `_L0` and `pooled` to the global-vector NPZ. The example configuration provides a separate prefix for each threshold.
+Set each dataset’s `maps` to the prefix before `_L0` and `pooled` to the four-scale vector NPZ. Existing compatible map NPZ archives can be read directly or unpacked with `python materials.py /path/to/cache/prefix --compact`. Generate a four-scale GV before scoring older runs with legacy pooled data.
 
 ### Cache alignment requirement
 
@@ -478,9 +436,10 @@ Incorrect cache-to-image matching invalidates the corresponding experiment even 
 | TopoCTI stages | Blocks 1–10, 11–20, 21–30, 31–40 |
 | TopoCTI injection locations | Before blocks 1, 11, 21, and 31 |
 | TopoCTI interaction | Spatially aligned patch and topology projections, 512 channels, FP32 |
-| Patch grid | 14 × 14, bilinear alignment with `align_corners=False` |
+| Patch grid | Native topology grid bilinearly resampled to 14 × 14, `align_corners=False` |
 | Residual update | Norm limit of 0.3 × reference-token norm, followed by a learned scale of 0.1 × sigmoid(gate) |
 | CLS update | Learned spatial pooling at stage 4 |
+| Global topology vector | GAP on four fused native maps, 4 × 400 = 1,600 dimensions |
 | ConvNeXtV2 branch | Pretrained and frozen |
 | ConvNeXtV2 role | Gated complementary visual fusion |
 | DNFD `λortho` | 0.05 |
@@ -529,7 +488,7 @@ The principal local DINOv3 source file modified for TopoFormer is:
 Backbone/dinov3/dinov3/dinov3/models/vision_transformer.py
 ```
 
-The transformer calls the hook before the first block of each stage. The hook returns the updated token stream in the same list position so that the next block receives it. The CPU self-check verifies all four handoffs and checks that gradients reach the patch projections and final CLS projection.
+The transformer calls the hook before the first block of each stage. The hook returns the updated token stream in the same list position so that the next block receives it. The training preflight checks all four handoffs and verifies that swapping inputs at each topology level changes the output. The training loop checks gradients and parameter updates in the patch projections and final CLS projection.
 
 Users comparing this repository against upstream DINOv3 should therefore distinguish:
 
@@ -543,35 +502,27 @@ Users comparing this repository against upstream DINOv3 should therefore disting
 
 ### 1. TopoFPN
 
-TopoFPN organizes persistent-homology descriptors into spatially aligned multi-scale topology maps.
+TopoFPN builds one map of 400-channel persistence images per window size. Starting with T3 = F̂3, it adds the nearest-neighbor upsampled coarser map to each finer map, Tl = F̂l + Up(Tl+1). Fusion matches channels by their within-window persistence-image grid indices. A channel can correspond to different absolute birth and persistence values in different windows because the grid bounds are fitted separately.
 
-Relevant project files include:
-
-```text
-topoformer/data/topo_maps.py
-notebooks/TopoFPN_layer.py
-notebooks/TopoFPN_vector.py
-notebooks/TopoFPN_layer_CRC_180.py
-notebooks/TopoFPN_vector_CRC_180.py
-```
-
-The four topology levels are aligned in a top-down pyramid before injection into the visual transformer.
+The same fused maps support TopoCTI and the global topology vector. See [the PH and TopoFPN implementation](ph/features.py).
 
 ### 2. TopoCTI
 
-TopoCTI aligns local tissue topology with the visual patch grid at four depths. The four stage-specific maps L0–L3 enter immediately before blocks 1, 11, 21 and 31, respectively. Each stage spans ten DINOv3 blocks.
+TopoCTI injects progressively broader topology into deeper visual stages. The four stage-specific maps L0–L3 enter immediately before blocks 1, 11, 21 and 31, respectively. Each stage spans ten DINOv3 blocks.
 
 <p align="center">
   <img src="docs/figures/TopoCTI.png" alt="Four stages of TopoCTI, local patch gates and final CLS pooling" width="95%">
 </p>
 
-For each patch, the module bilinearly resamples the corresponding native topology grid to 14 × 14. Separate layer normalizations and linear maps project the visual token and its aligned topology vector into 512 dimensions. A sigmoid of the visual projection gates the topology channels element by element. A linear map projects this interaction back to the token dimension. The update is clipped to 30% of the reference-token norm and multiplied by a learned residual scale initialized to 0.05.
+At each stage, the module bilinearly resamples the native topology grid to the 14 × 14 patch grid. Separate layer normalizations and linear maps project the visual token and its aligned topology vector into 512 dimensions. A sigmoid of the visual projection gates the topology channels element by element. A linear map projects this interaction back to the token dimension. The update is clipped to 30% of the reference-token norm and multiplied by a learned residual scale initialized to 0.05.
+
+**Fig. 2.** Four-stage injection, position-wise gated patch updates, and the stage-4 CLS update.
 
 Only the last stage also updates CLS. A learned scalar score per patch gives softmax weights over the 196 interactions. Their weighted sum is projected, clipped against the CLS norm and added with its own learned scale. The four register tokens pass through each stage unchanged. See [the stage implementation](topoformer/model/four_stage_cti.py) and [model assembly](topoformer/model/model_builder.py).
 
 ### 3. LoRA adaptation
 
-LoRA adapts the attention QKV and output projections of the frozen ViT-7B/16. Its SwiGLU feed-forward layers use different names from the helper’s optional `fc1` and `fc2` targets.
+LoRA adapts the combined query–key–value projection and the output projection of self-attention in all 40 ViT-7B/16 blocks. The original attention weights and the feed-forward layers remain frozen.
 
 Implementation:
 
@@ -589,7 +540,7 @@ dropout = 0.05
 
 ### 4. DNFD
 
-DNFD separates task-oriented discriminative representations from an auxiliary feature branch and applies regularization objectives to encourage representation differentiation.
+DNFD penalizes cross-covariance between the discriminative and auxiliary features. It supervises the DFDA classifier with class labels and encourages the NFDA decoder to output a uniform class distribution.
 
 Implementation:
 
@@ -597,7 +548,7 @@ Implementation:
 topoformer/model/disentanglement.py
 ```
 
-DFDA produces the discriminative features and NFDA the nuisance features. Their supervision shapes the shared visual representation during training. The export retains both branches and their predictions. The KL regularizer is active from epoch 2.
+DFDA produces the discriminative features and NFDA the nuisance features. Their supervision shapes the shared visual representation during training. The export retains both branches and their predictions. The covariance and KL terms are active from epoch 2.
 
 Reported objective weights:
 
@@ -620,113 +571,47 @@ The ConvNeXtV2 representation is integrated through a learned gated fusion mecha
 
 ### 6. Global topological vector
 
-In addition to local multi-scale topology maps, the pipeline computes a sample-level global topological vector.
+Each native fused map from the 16-, 32-, 64- and 128-pixel windows is spatially averaged once. Concatenating GAP(T0), GAP(T1), GAP(T2), and GAP(T3) in level order yields four 400-dimensional blocks. This uses the actual native cell counts, including the 3 × 3 and 1 × 1 grids for the coarser CRC scales.
 
-The global vector concatenates the pooled 400-channel maps of the three-scale pyramid (16, 32 and 64 pixels). It has 1,200 dimensions. Token injection uses all four spatial levels, including the 128-pixel window.
-
-For the **Global Vector Only** branch-control experiment, the global topological vector is directly used to train an L2-regularized logistic classifier.
+For the manuscript's **Global Vector Only** branch-control analysis, L2-regularized logistic regression used the topology vector as its sole input.
 
 ---
 
 ## Training
 
-Before launching training, configure:
-
-- dataset paths;
-- internal train/validation split settings;
-- official test-set path;
-- DINOv3 checkpoint path;
-- ConvNeXtV2 checkpoint path;
-- TopoFPN cache path;
-- output checkpoint directory;
-- feature-cache directory;
-- random seed.
+Prepare the PH cache and set the dataset paths, split manifest, pretrained weights and PH paths in `config.local.json`. Choose a fresh output directory for each seed. The examples use one visible CUDA GPU. The optional `preflight` action accepts the same arguments as `train` and checks that each topology level reaches the DINOv3 token stream.
 
 ### DeepHisto example
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python scripts/train_briancancer_rgb_200_seed42.py
+CUDA_VISIBLE_DEVICES=0 python run_topoformer.py train briancancer 200 42 runs/deephisto/seed42
 ```
 
-This corresponds to:
-
-```text
-PH foreground threshold = 200
-seed                    = 42
-```
-
-Reported DeepHisto seeds:
-
-```text
-42
-123
-666
-```
+DeepHisto uses threshold 200 and seeds 42, 123 and 666.
 
 ### CRC example
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python scripts/train_crc_rgb_180_seed42.py
+CUDA_VISIBLE_DEVICES=0 python run_topoformer.py train crc 180 42 runs/crc/seed42
 ```
 
-This corresponds to:
-
-```text
-PH foreground threshold = 180
-seed                    = 42
-```
-
-Reported CRC seeds:
-
-```text
-12
-42
-666
-```
+CRC uses threshold 180 and seeds 12, 42 and 666. Set `--workers 0` to use the main process for image loading, for example when debugging a local data installation.
 
 ### Validation and test-set separation
 
-The released experimental protocol uses a stratified validation subset drawn only from the official training data.
-
-Model/epoch selection is based on **validation balanced accuracy**.
-
-Epoch and threshold selection use validation scores. The published three-seed summaries use the seeds listed above for each dataset.
+Each epoch is evaluated with EMA weights on the stratified validation split. Feature export uses the ordinary weights saved at the epoch with the highest validation balanced accuracy. This leaves the designated official test set independent of epoch and threshold selection. A compact checkpoint omits the frozen DINOv3 parameters and verifies the original backbone checksum before reloading.
 
 ---
 
 ## Final Feature-Fusion Evaluation
 
-For a trained full model, export the train, validation and test features, then fit and evaluate the classifier:
-
 ```bash
-RUN=runs/threshold/briancancer/200/42
-CUDA_VISIBLE_DEVICES=0 python experiment.py export briancancer 200 42 full "$RUN" --split train val test
-python report.py score briancancer 200 42 full "$RUN" --split val test
+RUN=runs/deephisto/seed42
+CUDA_VISIBLE_DEVICES=0 python run_topoformer.py export briancancer 200 42 "$RUN" --split train val test
+python report.py briancancer 200 42 "$RUN" --split val test
 ```
 
-Use the direct export command for missing splits only. The seed-specific launchers already perform export and scoring. Metrics and aligned per-patch probabilities are in `scores/{val,test}/`. Each epoch is evaluated with EMA weights on validation data. The export loads the ordinary weights saved at the selected epoch.
-
-The original seed-specific notebooks remain available as historical evaluations:
-
-| Dataset | Seed | Notebook |
-|---|---:|---|
-| DeepHisto | 42 | `Final_feature_fusion_eval_briancancer—200_seed42.ipynb` |
-| DeepHisto | 123 | `Final_feature_fusion_eval_briancancer—200_seed123.ipynb` |
-| DeepHisto | 666 | `Final_feature_fusion_eval_briancancer—200_seed666.ipynb` |
-| CRC | 12 | `Final_feature_fusion_eval_crc—180_seed12.ipynb` |
-| CRC | 42 | `Final_feature_fusion_eval_crc—180_seed42.ipynb` |
-| CRC | 666 | `Final_feature_fusion_eval_crc—180_seed666.ipynb` |
-
-Each notebook must be paired with the matching:
-
-- random seed;
-- model checkpoint;
-- feature cache;
-- topology cache;
-- dataset split;
-- final test-set path.
-
-Mixing outputs from different seeds or preprocessing thresholds is not a valid reproduction of the reported result.
+For CRC, use the corresponding run directory and replace `briancancer 200 42` with the dataset, threshold and seed used for training. Export only missing splits to complete a partial run. The validation and test predictions and metrics are saved under `scores/{val,test}/`. Match the seed, checkpoint, feature cache, topology cache, split manifest and test image paths for each run. The evaluation command fits the normalization and logistic regression on the training split and checks the identities and class labels of the selected PH rows.
 
 ---
 
@@ -736,8 +621,8 @@ The following results are reported as **mean ± sample standard deviation (%) ov
 
 | Dataset | Accuracy | Balanced accuracy | Macro precision | Macro specificity (OvR) | Macro F1 | Macro AUROC (OvR) |
 |---|---:|---:|---:|---:|---:|---:|
-| DeepHisto | 97.24 ± 0.33 | 86.79 ± 2.36 | 96.30 ± 0.15 | 98.87 ± 0.18 | 89.73 ± 2.09 | 99.85 ± 0.05 |
-| CRC | 97.05 ± 0.27 | 95.69 ± 0.82 | 95.99 ± 0.36 | 99.64 ± 0.03 | 95.67 ± 0.67 | 99.80 ± 0.03 |
+| DeepHisto | 97.23 ± 0.36 | 86.78 ± 2.41 | 96.11 ± 0.24 | 98.87 ± 0.19 | 89.70 ± 2.18 | 99.85 ± 0.05 |
+| CRC | 97.06 ± 0.24 | 95.69 ± 0.78 | 95.98 ± 0.33 | 99.64 ± 0.03 | 95.67 ± 0.61 | 99.80 ± 0.04 |
 
 For CRC, balanced accuracy is reported together with overall accuracy because the nine tissue classes are not perfectly balanced.
 
@@ -762,9 +647,7 @@ The manuscript and supplementary experiments additionally evaluate:
 - external TCGA-UT generalization;
 - paired statistical comparisons.
 
-Use `jobs.py list STAGE` to list commands for a stage. The full workflow starts with `threshold`, then `python jobs.py select`, `main` and `ablation`. Other stages include `robust`, `external`, `cam`, `s2`, `s4`, `s9` and `s10`. List commands report the arguments for each run. `python jobs.py summary` aggregates the available scores.
-
-Figure 3 uses five fixed tiles per dataset. Unpack the tissue masks with `python -m zipfile -e assets/figure3_masks.zip assets`. Run `python gradcam.py crc 180 full runs/threshold/crc/180/42 --check-inputs` to verify CRC tile and mask hashes. Grad-CAM targets the DFDA branch at block −2 for DeepHisto and −5 for CRC. The occlusion experiment recomputes PH after blurring 5%, 10% or 20% of tissue. Stain Shift and Patch Shuffle require the perturbed test images, and external evaluation requires both raw and Reinhard-normalized images. For S10, place three aligned Virchow2 prediction NPZs per dataset under `assets/virchow/`, named `deephisto_virchow2*.npz` or `crc_virchow2*.npz`. Each file supplies `paths`, `classes`, `y_true` and `probabilities`. These comparator outputs are external inputs.
+The manuscript and supplement provide the analysis protocols and results. Figure 3 uses five fixed tiles per dataset and computes Grad-CAM from DFDA at block −2 on DeepHisto and block −5 on CRC. The faithfulness analysis recomputes the PH maps after blurring 5%, 10%, or 20% of the tissue and scores DFDA probabilities. The stain and patch-shuffle analyses use transformed test inputs. The paired comparisons require aligned sample IDs, true labels, classes, and predicted probabilities for each seed from both models.
 
 ### Foreground-threshold settings used in the main experiments
 
@@ -788,7 +671,7 @@ Counts from the full models loaded with the seed-42 checkpoints:
 | DeepHisto (five classes) | 6,869,929,109 | 66,188,949 |
 | CRC (nine classes) | 6,869,930,657 | 66,190,497 |
 
-The earlier supplementary profile lists 7.12B total and 321.6M trainable parameters for its profiled configuration. The counts above come from the released gated model.
+Supplementary Section 6 reports a separately profiled TopoFormer configuration with 7.12B total and 321.6M trainable parameters. The counts above describe the gated checkpoints used by this release.
 
 The large DINOv3 backbone is frozen and adapted with LoRA; however, freezing parameters does not remove the inference-time computational cost of executing the backbone.
 
@@ -835,7 +718,7 @@ For a reproducible run, verify all of the following before training:
 - [ ] The reported optimizer, learning rate, weight decay, epoch count, and regularization settings are unchanged.
 - [ ] The selected checkpoint is based on internal validation balanced accuracy.
 - [ ] Final metrics use the designated official test set.
-- [ ] The fusion scorer uses the matching seed, checkpoint and caches. Historical notebooks are paired with their original exports.
+- [ ] The fusion scorer uses the matching seed, checkpoint and four-scale caches.
 - [ ] Mean and sample standard deviation are computed across the three reported seeds.
 
 ### Random seeds

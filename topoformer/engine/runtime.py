@@ -89,10 +89,7 @@ def build_train_args(
         kd_weight=0.0,
         kd_teacher_path=None,
         kd_temperature=1.0,
-        # Disable loading best@val weights at end of training.
-        # Reason: neither script passes a real val_loader; test_loader is held out
-        # and must NOT be used to select model checkpoints. The final test evaluation
-        # is therefore performed on truly independent last-epoch weights.
+        # Export reloads the validation-selected checkpoint from disk.
         load_best_at_end=False,
     )
 
@@ -188,79 +185,3 @@ def save_npz(
     os.replace(pending, out_path)
     print("[cache] saved:", out_path)
     return out_path
-
-
-@torch.no_grad()
-def predict_a(model, loader, device):
-    model.eval()
-
-    ys = []
-    ps = []
-
-    for batch in loader:
-        if isinstance(batch, (tuple, list)) and len(batch) == 4:
-            images, targets, topo_levels, _pths = batch
-        else:
-            images, targets, topo_levels = batch
-
-        images = images.to(device, non_blocking=True)
-        topo_levels = {k: v.to(device, non_blocking=True) for k, v in topo_levels.items()}
-
-        out = model(images, grl_lambda=0.0, topo_levels=topo_levels)
-        logits = out["logitsA"].detach().cpu()
-        pred = logits.argmax(dim=1).numpy()
-
-        ys.append(np.asarray(targets, dtype=np.int64))
-        ps.append(pred)
-
-    y = np.concatenate(ys, axis=0)
-    p = np.concatenate(ps, axis=0)
-
-    return y, p
-
-
-def print_report_and_confusion_matrix(
-    model_for_cache,
-    test_cache_loader,
-    device,
-    fd_label_names,
-    fd_id_to_domain,
-    dataset_tag: str,
-    encoder_name: str,
-    test_metrics,
-):
-    from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
-    import matplotlib.pyplot as plt
-
-    y_true, y_pred = predict_a(model_for_cache, test_cache_loader, device)
-
-    labels = list(range(len(fd_label_names)))
-    target_names = [fd_id_to_domain[i] for i in labels]
-
-    print("\nclassification_report (test|A head):")
-    print(
-        classification_report(
-            y_true,
-            y_pred,
-            labels=labels,
-            target_names=target_names,
-            digits=4,
-            zero_division=0,
-        )
-    )
-
-    cm = confusion_matrix(y_true, y_pred, labels=labels)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=target_names)
-
-    fig, ax = plt.subplots(figsize=(7.5, 7.5))
-    disp.plot(ax=ax, cmap="Blues", xticks_rotation=45, values_format="d")
-
-    title_acc = float(test_metrics.get("acc_A", float("nan")))
-    title_bacc = float(test_metrics.get("bal_acc_A", float("nan")))
-
-    plt.title(
-        f"DINO-FD {dataset_tag} + TopoInject(MRFP+CTI maps) | "
-        f"{encoder_name} | test acc={title_acc:.3f} bAcc={title_bacc:.3f}"
-    )
-    plt.tight_layout()
-    plt.show()

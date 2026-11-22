@@ -1,55 +1,11 @@
-# TopoFormer requirements
-# Reported training environment: Python 3.11
-#
-# This is a conservative runtime file for the current TopoFormer repository:
-# - main training scripts
-# - TopoFPN notebooks
-# - evaluation notebooks
-# - local DINOv3 backbone
-#
-# For CUDA training, install torch/torchvision according to your CUDA version
-# if these default pip wheels do not match your machine:
-# https://pytorch.org/get-started/locally/
-
-# Core deep learning
+# Python 3.11. Install the CUDA 12.1 PyTorch wheels as described in README.md.
 torch==2.4.0
 torchvision==0.19.0
-
-# Numerical computing and data processing
-numpy>=1.24
-pandas>=2.0
-
-# Image I/O and preprocessing
+numpy>=1.24,<2
 pillow>=10.0
-opencv-python>=4.8
+opencv-python>=4.8,<4.12
 tifffile>=2023.0
-
-# Machine learning, metrics, and visualization
 scikit-learn==1.8.0
-scipy
-einops
-matplotlib>=3.7
 tqdm>=4.66
-
-# Backbone / model utilities
 timm==1.0.24
-
-# Topological data analysis
 gudhi==3.11.0
-
-# Local DINOv3 repository dependencies
-ftfy
-omegaconf
-regex
-submitit
-termcolor
-torchmetrics
-
-# Optional but included for robustness because related code paths exist
-transformers>=4.40.0
-umap-learn>=0.5
-pydicom>=2.4
-
-# Notebook support
-jupyter>=1.0
-ipykernel>=6.0
